@@ -10,17 +10,20 @@ import { TmuxAdapter } from "./tmux-adapter";
 import { Iterm2Adapter } from "./iterm2-adapter";
 import { ZellijAdapter } from "./zellij-adapter";
 import { WezTermAdapter } from "./wezterm-adapter";
+import { CmuxAdapter } from "./cmux-adapter";
 
 /**
  * Available terminal adapters, ordered by priority
  *
  * Detection order (first match wins):
+ * 0. CMUX - if CMUX_SOCKET_PATH is set
  * 1. tmux - if TMUX env is set
  * 2. Zellij - if ZELLIJ env is set and not in tmux
  * 3. iTerm2 - if TERM_PROGRAM=iTerm.app and not in tmux/zellij
  * 4. WezTerm - if WEZTERM_PANE env is set and not in tmux/zellij
  */
 const adapters: TerminalAdapter[] = [
+  new CmuxAdapter(),
   new TmuxAdapter(),
   new ZellijAdapter(),
   new Iterm2Adapter(),
