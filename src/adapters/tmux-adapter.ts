@@ -34,12 +34,36 @@ export class TmuxAdapter implements TerminalAdapter {
     }
   }
 
+  private isPaneUsable(paneId: string | null | undefined): paneId is string {
+    if (!paneId) return false;
+
+    try {
+      const result = execCommand("tmux", ["display-message", "-p", "-t", paneId, "#{pane_id}"]);
+      return result.status === 0 && result.stdout.trim() === paneId;
+    } catch {
+      return false;
+    }
+  }
+
+  private getOriginPaneId(preferredPaneId?: string | null): string | null {
+    if (this.isPaneUsable(preferredPaneId)) {
+      return preferredPaneId;
+    }
+
+    const currentPaneId = this.getCurrentPaneId();
+    if (this.isPaneUsable(currentPaneId)) {
+      return currentPaneId;
+    }
+
+    return null;
+  }
+
   spawn(options: SpawnOptions): string {
     const envArgs = Object.entries(options.env)
       .filter(([k]) => k.startsWith("PI_"))
       .map(([k, v]) => `${k}=${v}`);
 
-    const originPaneId = this.getCurrentPaneId();
+    const originPaneId = this.getOriginPaneId(options.anchorPaneId);
     const tmuxArgs = [
       "split-window",
       "-h", "-dP",
@@ -63,10 +87,10 @@ export class TmuxAdapter implements TerminalAdapter {
     }
 
     const newPaneId = result.stdout.trim();
-    const layoutTarget = this.getWindowIdForPane(newPaneId) ?? this.getWindowIdForPane(originPaneId);
+    const layoutTarget = this.getWindowIdForPane(originPaneId) ?? this.getWindowIdForPane(newPaneId);
 
     // Apply layout to the exact window that contains the spawned pane so the
-    // split always stays anchored to the originating tmux window.
+    // split always stays anchored to the intended tmux window.
     if (layoutTarget) {
       execCommand("tmux", ["set-window-option", "-t", layoutTarget, "main-pane-width", "60%"]);
       execCommand("tmux", ["select-layout", "-t", layoutTarget, "main-vertical"]);
