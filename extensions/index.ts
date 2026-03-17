@@ -463,6 +463,15 @@ export default function (pi: ExtensionAPI) {
       }
 
       const teamConfig = await teams.readConfig(safeTeamName);
+      
+      // Check if a teammate with this name already exists - kill them first
+      // This handles the case where the user aborts mid-execution and restarts
+      const existingMember = teamConfig.members.find(m => m.name === safeName && m.agentType === "teammate");
+      if (existingMember) {
+        await killTeammate(safeTeamName, existingMember);
+        await teams.removeMember(safeTeamName, safeName);
+      }
+      
       let chosenModel = params.model || teamConfig.defaultModel;
 
       // Resolve model to provider/model format
