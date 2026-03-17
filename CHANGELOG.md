@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.2] - 2026-03-17
+
+### Fixed
+- CmuxAdapter is now properly registered in the terminal registry (#8)
+- CmuxAdapter detection now defensively checks for tmux/Zellij to avoid false positives in nested environments
+
+### Added
+- Comprehensive test suite for CmuxAdapter (25 tests covering all adapter methods)
+
 ## [0.9.1] - 2026-03-17
 
 ### Fixed
