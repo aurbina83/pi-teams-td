@@ -24,14 +24,18 @@ import { spawnSync } from "node:child_process";
  * regular environments, so prefer that when available.
  */
 function getPiLaunchCommand(): string {
-  // If we have an execPath, use it directly (works for both compiled binaries and node scripts)
-  if (process.execPath) {
-    return JSON.stringify(process.execPath);
+  // When running as a compiled binary (pkg/sea), execPath IS the binary
+  // and argv[1] is the first user argument, not a script path.
+  // When running via node, execPath is the node binary and argv[1] is the script.
+  const execIsNode = process.execPath && /\bnode(\.exe)?$/.test(process.execPath);
+
+  if (execIsNode && process.argv[1]) {
+    return `${JSON.stringify(process.execPath)} ${JSON.stringify(process.argv[1])}`;
   }
 
-  // Fallback: try argv[1] with node prefix for regular node environments
-  if (process.argv[1]) {
-    return `node ${JSON.stringify(process.argv[1])}`;
+  if (process.execPath && !execIsNode) {
+    // Compiled binary — execPath is the app itself
+    return JSON.stringify(process.execPath);
   }
 
   // Last resort: just use "pi" and hope it's on PATH
