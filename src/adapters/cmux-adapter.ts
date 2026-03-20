@@ -44,8 +44,9 @@ export class CmuxAdapter implements TerminalAdapter {
     } else {
       splitArgs.push("right");
     }
-    splitArgs.push("--command", fullCommand);
 
+    // cmux new-split does NOT support --command, so we split first
+    // then send the command text to the new surface via `cmux send`.
     const splitResult = execCommand("cmux", splitArgs);
 
     if (splitResult.status !== 0) {
@@ -55,6 +56,10 @@ export class CmuxAdapter implements TerminalAdapter {
     const output = splitResult.stdout.trim();
     if (output.startsWith("OK ")) {
       const surfaceId = output.substring(3).trim().split(/\s+/)[0];
+
+      // Send the command to the new surface
+      execCommand("cmux", ["send", "--surface", surfaceId, fullCommand]);
+
       // The first surface becomes the column anchor for subsequent vertical splits
       if (!this._columnAnchor) {
         this._columnAnchor = surfaceId;
@@ -133,12 +138,15 @@ export class CmuxAdapter implements TerminalAdapter {
         .filter(([k]) => k.startsWith("PI_"))
         .map(([k, v]) => `${k}=${v}`)
         .join(" ");
-      
-      const baseCommand = envPrefix ? `env ${envPrefix} ${options.command}` : options.command;
-      const fullCommand = options.cwd ? `cd '${options.cwd}' && ${baseCommand}` : baseCommand;
 
-      // Target the new window
-      execCommand("cmux", ["new-workspace", "--window", windowId, "--command", fullCommand]);
+      const fullCommand = envPrefix ? `env ${envPrefix} ${options.command}` : options.command;
+
+      // new-workspace supports --command and --cwd natively
+      const wsArgs = ["new-workspace", "--window", windowId, "--command", fullCommand];
+      if (options.cwd) {
+        wsArgs.push("--cwd", options.cwd);
+      }
+      execCommand("cmux", wsArgs);
 
       if (options.teamName) {
         this.setWindowTitle(windowId, options.teamName);
