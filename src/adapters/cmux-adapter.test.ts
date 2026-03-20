@@ -134,9 +134,26 @@ describe("CmuxAdapter", () => {
       })).toThrow("cmux new-split returned unexpected output");
     });
 
+    it("should parse only the first token as surface ID from multi-token response", () => {
+      mockExecCommand.mockReturnValue({
+        stdout: "OK surface:8 workspace:2",
+        stderr: "",
+        status: 0
+      });
+
+      const result = adapter.spawn({
+        name: "test-agent",
+        cwd: "/project",
+        command: "pi",
+        env: {},
+      });
+
+      expect(result).toBe("surface:8");
+    });
+
     it("should split right for the first spawn, then down on the anchor for subsequent spawns", () => {
-      // First spawn: splits right
-      mockExecCommand.mockReturnValueOnce({ stdout: "OK surface-1", stderr: "", status: 0 });
+      // First spawn: splits right — response includes extra metadata
+      mockExecCommand.mockReturnValueOnce({ stdout: "OK surface:1 workspace:1", stderr: "", status: 0 });
 
       adapter.spawn({
         name: "agent-1",
@@ -151,7 +168,7 @@ describe("CmuxAdapter", () => {
       );
 
       // Second spawn: splits down, targeting the first surface
-      mockExecCommand.mockReturnValueOnce({ stdout: "OK surface-2", stderr: "", status: 0 });
+      mockExecCommand.mockReturnValueOnce({ stdout: "OK surface:2 workspace:1", stderr: "", status: 0 });
 
       adapter.spawn({
         name: "agent-2",
@@ -162,11 +179,11 @@ describe("CmuxAdapter", () => {
 
       expect(mockExecCommand).toHaveBeenCalledWith(
         "cmux",
-        ["new-split", "down", "--surface", "surface-1", "--command", "cd '/project' && pi --agent a2"]
+        ["new-split", "down", "--surface", "surface:1", "--command", "cd '/project' && pi --agent a2"]
       );
 
       // Third spawn: also splits down on the anchor
-      mockExecCommand.mockReturnValueOnce({ stdout: "OK surface-3", stderr: "", status: 0 });
+      mockExecCommand.mockReturnValueOnce({ stdout: "OK surface:3 workspace:1", stderr: "", status: 0 });
 
       adapter.spawn({
         name: "agent-3",
@@ -177,7 +194,7 @@ describe("CmuxAdapter", () => {
 
       expect(mockExecCommand).toHaveBeenCalledWith(
         "cmux",
-        ["new-split", "down", "--surface", "surface-1", "--command", "cd '/project' && pi --agent a3"]
+        ["new-split", "down", "--surface", "surface:1", "--command", "cd '/project' && pi --agent a3"]
       );
     });
   });

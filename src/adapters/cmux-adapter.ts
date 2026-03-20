@@ -54,7 +54,7 @@ export class CmuxAdapter implements TerminalAdapter {
 
     const output = splitResult.stdout.trim();
     if (output.startsWith("OK ")) {
-      const surfaceId = output.substring(3).trim();
+      const surfaceId = output.substring(3).trim().split(/\s+/)[0];
       // The first surface becomes the column anchor for subsequent vertical splits
       if (!this._columnAnchor) {
         this._columnAnchor = surfaceId;
@@ -119,8 +119,8 @@ export class CmuxAdapter implements TerminalAdapter {
 
     const output = result.stdout.trim();
     if (output.startsWith("OK ")) {
-      const windowId = output.substring(3).trim();
-      
+      const windowId = output.substring(3).trim().split(/\s+/)[0];
+
       // Now we need to run the command in this window.
       // Usually new-window creates a default workspace/surface.
       // We might need to find the workspace in that window.
@@ -203,7 +203,7 @@ export class CmuxAdapter implements TerminalAdapter {
     
     const output = result.stdout.trim();
     if (output.startsWith("OK ")) {
-      const workspaceId = output.substring(3).trim();
+      const workspaceId = output.substring(3).trim().split(/\s+/)[0];
       execCommand("cmux", ["workspace-action", "--action", "rename", "--title", title, "--workspace", workspaceId]);
       return workspaceId;
     }
