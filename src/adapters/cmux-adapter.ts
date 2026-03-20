@@ -9,6 +9,9 @@ import { TerminalAdapter, SpawnOptions, execCommand } from "../utils/terminal-ad
 export class CmuxAdapter implements TerminalAdapter {
   readonly name = "cmux";
 
+  // Track the first spawned surface so subsequent spawns stack vertically on it
+  private _columnAnchor: string | null = null;
+
   detect(): boolean {
     // Defensive: Don't detect cmux if we're inside tmux or Zellij
     // This prevents false positives in nested terminal scenarios
@@ -30,11 +33,21 @@ export class CmuxAdapter implements TerminalAdapter {
       .map(([k, v]) => `${k}=${v}`)
       .join(" ");
     
-    const fullCommand = envPrefix ? `env ${envPrefix} ${options.command}` : options.command;
+    const baseCommand = envPrefix ? `env ${envPrefix} ${options.command}` : options.command;
+    const fullCommand = options.cwd ? `cd '${options.cwd}' && ${baseCommand}` : baseCommand;
 
-    // CMUX new-split returns "OK <UUID>"
-    const splitResult = execCommand("cmux", ["new-split", "right", "--command", fullCommand]);
-    
+    // First spawn splits right to create a new column, subsequent spawns
+    // split down within that column so agents stack vertically.
+    const splitArgs = ["new-split"];
+    if (this._columnAnchor) {
+      splitArgs.push("down", "--surface", this._columnAnchor);
+    } else {
+      splitArgs.push("right");
+    }
+    splitArgs.push("--command", fullCommand);
+
+    const splitResult = execCommand("cmux", splitArgs);
+
     if (splitResult.status !== 0) {
       throw new Error(`cmux new-split failed with status ${splitResult.status}: ${splitResult.stderr}`);
     }
@@ -42,6 +55,10 @@ export class CmuxAdapter implements TerminalAdapter {
     const output = splitResult.stdout.trim();
     if (output.startsWith("OK ")) {
       const surfaceId = output.substring(3).trim();
+      // The first surface becomes the column anchor for subsequent vertical splits
+      if (!this._columnAnchor) {
+        this._columnAnchor = surfaceId;
+      }
       return surfaceId;
     }
 
@@ -117,7 +134,8 @@ export class CmuxAdapter implements TerminalAdapter {
         .map(([k, v]) => `${k}=${v}`)
         .join(" ");
       
-      const fullCommand = envPrefix ? `env ${envPrefix} ${options.command}` : options.command;
+      const baseCommand = envPrefix ? `env ${envPrefix} ${options.command}` : options.command;
+      const fullCommand = options.cwd ? `cd '${options.cwd}' && ${baseCommand}` : baseCommand;
 
       // Target the new window
       execCommand("cmux", ["new-workspace", "--window", windowId, "--command", fullCommand]);
