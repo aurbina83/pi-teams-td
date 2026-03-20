@@ -1,0 +1,55 @@
+# pi-teams Predefined Teams
+# 
+# These teams are designed to work with td for project-scoped task management.
+# Each team has agents with specialized roles and td-aware prompts.
+#
+# IMPORTANT: Before using these teams, read the td skill:
+# ~/.agents/skills/td-task-management/SKILL.md
+#
+# This skill has CRITICAL guidance on:
+# - Writing good tickets (bugs, features, tasks)
+# - Using --acceptance criteria
+# - Structured handoffs
+# - Session isolation for reviews
+
+# Full development pipeline: Scout → Plan → Build → Review
+# Best for: Features, refactors, bug fixes
+dev-sprint:
+  - td-scout
+  - td-coordinator
+  - td-implementer
+  - td-reviewer
+
+# Quick investigation: Scout + general work
+# Best for: Research, exploration, spike investigations
+investigation:
+  - td-scout
+  - td-coordinator
+
+# Code review focused
+# Best for: Review sessions, pre-release audits
+code-review:
+  - td-reviewer
+  - td-coordinator
+
+# Full feature development
+# Best for: New features with clear scope
+feature-team:
+  - td-coordinator
+  - td-scout
+  - td-implementer
+  - td-implementer
+  - td-reviewer
+
+# Bug fixing sprint
+# Best for: Priority bug fixes
+bug-squad:
+  - td-coordinator
+  - td-implementer
+  - td-reviewer
+
+# Architecture planning
+# Best for: Design docs, tech specs, refactor planning
+architecture:
+  - td-scout
+  - td-coordinator
