@@ -81,7 +81,7 @@ describe("CmuxAdapter", () => {
       );
       expect(mockExecCommand).toHaveBeenCalledWith(
         "cmux",
-        ["send", "--surface", "surface-42", "cd '/home/user/project' && env PI_AGENT_ID=test-123 pi --agent test"]
+        ["send", "--surface", "surface-42", "cd '/home/user/project' && env PI_AGENT_ID=test-123 pi --agent test\n"]
       );
     });
 
@@ -104,7 +104,7 @@ describe("CmuxAdapter", () => {
       );
       expect(mockExecCommand).toHaveBeenCalledWith(
         "cmux",
-        ["send", "--surface", "surface-99", "cd '/home/user/project' && pi"]
+        ["send", "--surface", "surface-99", "cd '/home/user/project' && pi\n"]
       );
     });
 
@@ -172,7 +172,7 @@ describe("CmuxAdapter", () => {
       );
       expect(mockExecCommand).toHaveBeenCalledWith(
         "cmux",
-        ["send", "--surface", "surface:1", "cd '/project' && pi --agent a1"]
+        ["send", "--surface", "surface:1", "cd '/project' && pi --agent a1\n"]
       );
 
       // Second spawn: splits down, targeting the first surface
@@ -193,7 +193,7 @@ describe("CmuxAdapter", () => {
       );
       expect(mockExecCommand).toHaveBeenCalledWith(
         "cmux",
-        ["send", "--surface", "surface:2", "cd '/project' && pi --agent a2"]
+        ["send", "--surface", "surface:2", "cd '/project' && pi --agent a2\n"]
       );
 
       // Third spawn: also splits down on the anchor
@@ -214,7 +214,7 @@ describe("CmuxAdapter", () => {
       );
       expect(mockExecCommand).toHaveBeenCalledWith(
         "cmux",
-        ["send", "--surface", "surface:3", "cd '/project' && pi --agent a3"]
+        ["send", "--surface", "surface:3", "cd '/project' && pi --agent a3\n"]
       );
     });
   });

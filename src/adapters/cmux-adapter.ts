@@ -57,8 +57,8 @@ export class CmuxAdapter implements TerminalAdapter {
     if (output.startsWith("OK ")) {
       const surfaceId = output.substring(3).trim().split(/\s+/)[0];
 
-      // Send the command to the new surface
-      execCommand("cmux", ["send", "--surface", surfaceId, fullCommand]);
+      // Send the command to the new surface (append newline to execute it)
+      execCommand("cmux", ["send", "--surface", surfaceId, fullCommand + "\n"]);
 
       // The first surface becomes the column anchor for subsequent vertical splits
       if (!this._columnAnchor) {
