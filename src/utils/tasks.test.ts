@@ -6,12 +6,17 @@ import os from "node:os";
 import { createTask, updateTask, readTask, listTasks, submitPlan, evaluatePlan } from "./tasks";
 import * as paths from "./paths";
 import * as teams from "./teams";
+import { clearAdapterCache, setAdapter, JsonTaskAdapter } from "./task-adapters/registry";
 
 // Mock the paths to use a temporary directory
 const testDir = path.join(os.tmpdir(), "pi-teams-test-" + Date.now());
 
 describe("Tasks Utilities", () => {
   beforeEach(() => {
+    // Force JSON adapter for unit tests (td has different requirements)
+    clearAdapterCache();
+    setAdapter(new JsonTaskAdapter());
+
     if (fs.existsSync(testDir)) fs.rmSync(testDir, { recursive: true });
     fs.mkdirSync(testDir, { recursive: true });
     
@@ -21,6 +26,12 @@ describe("Tasks Utilities", () => {
     
     // Create a dummy team config
     fs.writeFileSync(path.join(testDir, "config.json"), JSON.stringify({ name: "test-team" }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearAdapterCache();
+    if (fs.existsSync(testDir)) fs.rmSync(testDir, { recursive: true });
   });
 
   afterEach(() => {
