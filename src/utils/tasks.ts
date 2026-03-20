@@ -1,17 +1,182 @@
 // Project: pi-teams
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync, execSync } from "node:child_process";
 import { TaskFile } from "./models";
 import { taskDir, sanitizeName } from "./paths";
 import { teamExists } from "./teams";
 import { withLock } from "./lock";
 import { runHook } from "./hooks";
 
+// Lazy-loaded TD bridge (only import when needed)
+let _TdTaskBridge: typeof import("./td-task-bridge").TdTaskBridge | null = null;
+let _tdBridge: import("./td-task-bridge").TdTaskBridge | null = null;
+let _tdAvailable: boolean | null = null;
+let _tdBridgeInitAttempted = false;
+
+/**
+ * Load the TdTaskBridge class lazily using require.
+ * Returns null if the module can't be loaded.
+ */
+function loadTdTaskBridge(): typeof import("./td-task-bridge").TdTaskBridge | null {
+  if (_tdBridgeInitAttempted) return _TdTaskBridge;
+  _tdBridgeInitAttempted = true;
+  
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const tdModule = require("./td-task-bridge");
+    _TdTaskBridge = tdModule.TdTaskBridge;
+    return _TdTaskBridge;
+  } catch (e) {
+    // Module not available, td integration disabled
+    _TdTaskBridge = null;
+    return null;
+  }
+}
+
+/**
+ * Check if td CLI is available in PATH.
+ */
+function isTdAvailable(): boolean {
+  if (_tdAvailable !== null) return _tdAvailable;
+  
+  try {
+    const result = spawnSync("td", ["--version"], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    _tdAvailable = result.status === 0;
+  } catch {
+    _tdAvailable = false;
+  }
+  
+  return _tdAvailable;
+}
+
+/**
+ * Check if .todos/ directory exists (td is initialized).
+ */
+function isTdInitialized(cwd: string): boolean {
+  return fs.existsSync(path.join(cwd, ".todos"));
+}
+
+/**
+ * Initialize td in the project with non-interactive response.
+ */
+function initTd(cwd: string): boolean {
+  try {
+    // Pipe "n" to skip any interactive prompts (e.g., template creation)
+    const result = spawnSync("td", ["init"], {
+      cwd,
+      encoding: "utf-8",
+      input: "n\n",
+      timeout: 10000,
+    });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get or create the TD task bridge.
+ */
+function getTdBridge(teamName: string, projectCwd: string): import("./td-task-bridge").TdTaskBridge | null {
+  // Check if td is available
+  if (!isTdAvailable()) {
+    return null;
+  }
+  
+  // Initialize if needed
+  if (!isTdInitialized(projectCwd)) {
+    if (!initTd(projectCwd)) {
+      return null;
+    }
+  }
+  
+  // Re-check initialization
+  if (!isTdInitialized(projectCwd)) {
+    return null;
+  }
+  
+  // Lazy load the bridge class
+  const TdTaskBridgeClass = loadTdTaskBridge();
+  if (!TdTaskBridgeClass) {
+    return null;
+  }
+  
+  if (!_tdBridge) {
+    _tdBridge = new TdTaskBridgeClass(teamName, projectCwd);
+  }
+  
+  return _tdBridge;
+}
+
+/**
+ * Detect if we should use td for this project.
+ * Returns the project directory if td is available and initialized.
+ */
+export function detectTd(): string | null {
+  // Check if td is in PATH
+  if (!isTdAvailable()) {
+    return null;
+  }
+  
+  // Walk up from cwd looking for .todos/
+  let dir = process.cwd();
+  while (dir !== "/") {
+    if (isTdInitialized(dir)) {
+      return dir;
+    }
+    // Also check for .git to find project root
+    if (fs.existsSync(path.join(dir, ".git"))) {
+      // Found project root, check if we can init td here
+      if (!isTdInitialized(dir)) {
+        if (initTd(dir)) {
+          return dir;
+        }
+      } else {
+        return dir;
+      }
+      break;
+    }
+    dir = path.dirname(dir);
+  }
+  
+  return null;
+}
+
+/**
+ * Check if td is available and initialized for the current project.
+ */
+export function isTdEnabled(): boolean {
+  return detectTd() !== null;
+}
+
 export function getTaskId(teamName: string): string {
   const dir = taskDir(teamName);
   const files = fs.readdirSync(dir).filter(f => f.endsWith(".json"));
   const ids = files.map(f => parseInt(path.parse(f).name, 10)).filter(id => !isNaN(id));
   return ids.length > 0 ? (Math.max(...ids) + 1).toString() : "1";
+}
+
+/**
+ * Convert legacy task format (from TdTaskBridge) to TaskFile format.
+ */
+function legacyToTaskFile(legacy: import("./td-task-bridge").LegacyTask): TaskFile {
+  return {
+    id: legacy.id,
+    subject: legacy.subject,
+    description: legacy.description,
+    activeForm: legacy.activeForm,
+    status: legacy.status,
+    plan: legacy.plan,
+    planFeedback: legacy.planFeedback,
+    blocks: legacy.blocks,
+    blockedBy: legacy.blockedBy,
+    owner: legacy.owner,
+    metadata: legacy.metadata,
+  };
 }
 
 function getTaskPath(teamName: string, taskId: string): string {
@@ -30,6 +195,17 @@ export async function createTask(
   if (!subject || !subject.trim()) throw new Error("Task subject must not be empty");
   if (!teamExists(teamName)) throw new Error(`Team ${teamName} does not exist`);
 
+  // Try to use td if available
+  const tdProjectDir = detectTd();
+  if (tdProjectDir) {
+    const bridge = getTdBridge(teamName, tdProjectDir);
+    if (bridge) {
+      const legacyTask = await bridge.create(subject, description, activeForm, metadata);
+      return legacyToTaskFile(legacyTask);
+    }
+  }
+
+  // Fall back to JSON files
   const dir = taskDir(teamName);
   const lockPath = dir;
 
@@ -56,6 +232,25 @@ export async function updateTask(
   updates: Partial<TaskFile>,
   retries?: number
 ): Promise<TaskFile> {
+  // Try to use td if available
+  const tdProjectDir = detectTd();
+  if (tdProjectDir) {
+    const bridge = getTdBridge(teamName, tdProjectDir);
+    if (bridge) {
+      const legacyTask = await bridge.get(taskId);
+      const updated = { ...legacyTask, ...updates };
+      const result = await bridge.update(taskId, updated);
+      
+      // Run hook for completed tasks
+      if (updates.status === "completed") {
+        await runHook(teamName, "task_completed", legacyToTaskFile(result));
+      }
+      
+      return legacyToTaskFile(result);
+    }
+  }
+
+  // Fall back to JSON files
   const p = getTaskPath(teamName, taskId);
 
   return await withLock(p, async () => {
@@ -87,6 +282,17 @@ export async function updateTask(
  */
 export async function submitPlan(teamName: string, taskId: string, plan: string): Promise<TaskFile> {
   if (!plan || !plan.trim()) throw new Error("Plan must not be empty");
+  
+  // Try to use td if available
+  const tdProjectDir = detectTd();
+  if (tdProjectDir) {
+    const bridge = getTdBridge(teamName, tdProjectDir);
+    if (bridge) {
+      const result = await bridge.submitPlan(taskId, plan);
+      return legacyToTaskFile(result);
+    }
+  }
+
   return await updateTask(teamName, taskId, { status: "planning", plan });
 }
 
@@ -106,6 +312,17 @@ export async function evaluatePlan(
   feedback?: string,
   retries?: number
 ): Promise<TaskFile> {
+  // Try to use td if available
+  const tdProjectDir = detectTd();
+  if (tdProjectDir) {
+    const bridge = getTdBridge(teamName, tdProjectDir);
+    if (bridge) {
+      const result = await bridge.evaluatePlan(taskId, action, feedback);
+      return legacyToTaskFile(result);
+    }
+  }
+
+  // Fall back to JSON files
   const p = getTaskPath(teamName, taskId);
 
   return await withLock(p, async () => {
@@ -142,6 +359,17 @@ export async function evaluatePlan(
 }
 
 export async function readTask(teamName: string, taskId: string, retries?: number): Promise<TaskFile> {
+  // Try to use td if available
+  const tdProjectDir = detectTd();
+  if (tdProjectDir) {
+    const bridge = getTdBridge(teamName, tdProjectDir);
+    if (bridge) {
+      const legacyTask = await bridge.get(taskId);
+      return legacyToTaskFile(legacyTask);
+    }
+  }
+
+  // Fall back to JSON files
   const p = getTaskPath(teamName, taskId);
   if (!fs.existsSync(p)) throw new Error(`Task ${taskId} not found`);
   return await withLock(p, async () => {
@@ -150,6 +378,17 @@ export async function readTask(teamName: string, taskId: string, retries?: numbe
 }
 
 export async function listTasks(teamName: string): Promise<TaskFile[]> {
+  // Try to use td if available
+  const tdProjectDir = detectTd();
+  if (tdProjectDir) {
+    const bridge = getTdBridge(teamName, tdProjectDir);
+    if (bridge) {
+      const legacyTasks = await bridge.list();
+      return legacyTasks.map(legacyToTaskFile);
+    }
+  }
+
+  // Fall back to JSON files
   const dir = taskDir(teamName);
   return await withLock(dir, async () => {
     const files = fs.readdirSync(dir).filter(f => f.endsWith(".json"));
@@ -165,6 +404,25 @@ export async function listTasks(teamName: string): Promise<TaskFile[]> {
 }
 
 export async function resetOwnerTasks(teamName: string, agentName: string) {
+  // Try to use td if available
+  const tdProjectDir = detectTd();
+  if (tdProjectDir) {
+    const bridge = getTdBridge(teamName, tdProjectDir);
+    if (bridge) {
+      // Get all tasks and reset owner on matching ones
+      const tasks = await bridge.list();
+      for (const task of tasks) {
+        if (task.owner === agentName) {
+          await bridge.update(task.id, {
+            status: task.status === "completed" ? "completed" : "pending",
+          });
+        }
+      }
+      return;
+    }
+  }
+
+  // Fall back to JSON files
   const dir = taskDir(teamName);
   const lockPath = dir;
 
