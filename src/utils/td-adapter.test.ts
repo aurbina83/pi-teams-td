@@ -1,381 +1,252 @@
-/**
- * TD Adapter Tests
- * 
- * Tests for the td-adapter module.
- * Requires td to be installed and initialized in test directories.
- */
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { execSync } from "node:child_process";
-import { TdAdapter, TdTask } from "./td-adapter";
+const spawnSyncMock = vi.hoisted(() => vi.fn());
+
+vi.mock("node:child_process", () => ({
+  spawnSync: spawnSyncMock,
+}));
+
+import { TdAdapter } from "./td-adapter";
+
+function tdResult(
+  stdout = "",
+  status = 0,
+  stderr = ""
+): { stdout: string; stderr: string; status: number } {
+  return { stdout, stderr, status };
+}
+
+function taskJson(id: string, overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    id,
+    title: `Task ${id}`,
+    description: `Description ${id}`,
+    status: "open",
+    type: "task",
+    priority: "P2",
+    labels: null,
+    parentId: "",
+    points: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    implementerSession: "ses_test",
+    reviewerSession: "",
+    logs: [],
+    acceptance: "",
+    minor: false,
+    ...overrides,
+  });
+}
 
 describe("TdAdapter", () => {
-  const testDir = path.join("/tmp", "td-adapter-test-" + Date.now());
   let adapter: TdAdapter;
 
-  beforeAll(() => {
-    // Create test directory with git repo
-    fs.mkdirSync(testDir, { recursive: true });
-    execSync("git init", { cwd: testDir });
-  });
-
-  afterAll(() => {
-    // Cleanup
-    try {
-      fs.rmSync(testDir, { recursive: true, force: true });
-    } catch {}
-  });
-
   beforeEach(() => {
-    adapter = new TdAdapter(testDir);
-    adapter.init();
+    spawnSyncMock.mockReset();
+    adapter = new TdAdapter("/tmp/td-adapter-unit");
   });
 
-  describe("detect()", () => {
-    it("should detect td when initialized", () => {
-      expect(adapter.detect()).toBe(true);
-    });
+  it("detects td from a successful list call", () => {
+    spawnSyncMock.mockReturnValue(tdResult(""));
+    expect(adapter.detect()).toBe(true);
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      "td",
+      ["list"],
+      expect.objectContaining({ cwd: "/tmp/td-adapter-unit", encoding: "utf-8", timeout: 10000 })
+    );
   });
 
-  describe("create()", () => {
-    it("should create a task with title and description", () => {
-      const task = adapter.create(
-        "Implement user authentication system",
-        "Add OAuth2 login flow with JWT tokens",
-        { type: "feature", priority: "P1" }
-      );
-
-      // td requires minimum 15 char titles
-      expect(task?.title.length || 0).toBeGreaterThanOrEqual(15);
-      expect(task).not.toBeNull();
-      expect(task!.description).toBe("Add OAuth2 login flow with JWT tokens");
-      expect(task!.type).toBe("feature");
-      expect(task!.priority).toBe("P1");
-      expect(task!.id).toMatch(/^td-[a-z0-9]+$/);
-    });
-
-    it("should create an epic", () => {
-      const task = adapter.create(
-        "User Management Epic for all auth features",
-        "All user-related features grouped together",
-        { type: "epic", priority: "P0" }
-      );
-
-      expect(task).not.toBeNull();
-      expect(task!.type).toBe("epic");
-    });
-
-    it("should create a bug with sufficient title length", () => {
-      const task = adapter.create(
-        "Fix login timeout bug with session expiry",
-        "Users are getting logged out after 30 seconds",
-        { type: "bug", priority: "P0" }
-      );
-
-      expect(task).not.toBeNull();
-      expect(task!.type).toBe("bug");
-    });
+  it("initializes td with init", () => {
+    spawnSyncMock.mockReturnValue(tdResult(""));
+    expect(adapter.init()).toBe(true);
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      "td",
+      ["init"],
+      expect.objectContaining({ cwd: "/tmp/td-adapter-unit", encoding: "utf-8", timeout: 10000 })
+    );
   });
 
-  describe("get()", () => {
-    it("should retrieve a task by ID", () => {
-      const created = adapter.create("Test task for get", "Description");
-      expect(created).not.toBeNull();
+  it("creates a task and fetches the created record", () => {
+    spawnSyncMock
+      .mockReturnValueOnce(tdResult("CREATED td-abc123\n"))
+      .mockReturnValueOnce(tdResult(taskJson("td-abc123")));
 
-      const retrieved = adapter.get(created!.id);
-      expect(retrieved).not.toBeNull();
-      expect(retrieved!.id).toBe(created!.id);
-      expect(retrieved!.title).toBe(created!.title);
+    const task = adapter.create("Implement auth flow", "OAuth2 login", {
+      type: "feature",
+      priority: "P1",
+      labels: ["auth", "backend"],
+      acceptance: "Login succeeds",
     });
 
-    it("should return null for non-existent task", () => {
-      const task = adapter.get("td-nonexistent123");
-      expect(task).toBeNull();
-    });
+    expect(task?.id).toBe("td-abc123");
+    expect(spawnSyncMock).toHaveBeenNthCalledWith(
+      1,
+      "td",
+      [
+        "create",
+        "Implement auth flow",
+        "-d",
+        "OAuth2 login",
+        "-t",
+        "feature",
+        "-p",
+        "P1",
+        "-l",
+        "auth,backend",
+        "--acceptance",
+        "Login succeeds",
+      ],
+      expect.objectContaining({ cwd: "/tmp/td-adapter-unit" })
+    );
+    expect(spawnSyncMock).toHaveBeenNthCalledWith(
+      2,
+      "td",
+      ["show", "td-abc123", "--format", "json"],
+      expect.objectContaining({ cwd: "/tmp/td-adapter-unit" })
+    );
   });
 
-  describe("list()", () => {
-    it("should list all tasks", () => {
-      adapter.create("Task 1", "Description 1");
-      adapter.create("Task 2", "Description 2");
-      adapter.create("Task 3", "Description 3");
+  it("lists tasks by parsing ids and hydrating each task", () => {
+    spawnSyncMock
+      .mockReturnValueOnce(tdResult("td-1 [P1] One\ntd-2 [P2] Two\n"))
+      .mockReturnValueOnce(tdResult(taskJson("td-1")))
+      .mockReturnValueOnce(tdResult(taskJson("td-2", { type: "bug" })));
 
-      const tasks = adapter.list();
-      expect(tasks.length).toBeGreaterThanOrEqual(3);
-    });
+    const tasks = adapter.list({ type: "task" });
 
-    it("should filter by type", () => {
-      adapter.create("A feature", "Desc", { type: "feature" });
-      adapter.create("A bug", "Desc", { type: "bug" });
-
-      const features = adapter.list({ type: "feature" });
-      expect(features.every(t => t.type === "feature")).toBe(true);
-    });
+    expect(tasks.map(task => task.id)).toEqual(["td-1", "td-2"]);
+    expect(spawnSyncMock).toHaveBeenNthCalledWith(
+      1,
+      "td",
+      ["list", "--type", "task"],
+      expect.objectContaining({ cwd: "/tmp/td-adapter-unit" })
+    );
   });
 
-  describe("start() / stop()", () => {
-    it("should start and stop work on a task", () => {
-      // td requires minimum 15 char titles
-      const task = adapter.create("Work task for testing purposes here");
-      expect(task).not.toBeNull();
+  it("updates a task and re-reads it", () => {
+    spawnSyncMock
+      .mockReturnValueOnce(tdResult("UPDATED td-1\n"))
+      .mockReturnValueOnce(tdResult(taskJson("td-1", { status: "in_progress" })));
 
-      // Start work
-      let success = adapter.start(task!.id);
-      expect(success).toBe(true);
-
-      let updated = adapter.get(task!.id);
-      expect(updated!.status).toBe("in_progress");
-
-      // Stop work
-      success = adapter.stop(task!.id);
-      expect(success).toBe(true);
-
-      updated = adapter.get(task!.id);
-      expect(updated!.status).toBe("open");
+    const task = adapter.update("td-1", {
+      title: "Updated title",
+      status: "in_progress",
+      labels: ["fast"],
     });
+
+    expect(task?.status).toBe("in_progress");
+    expect(spawnSyncMock).toHaveBeenNthCalledWith(
+      1,
+      "td",
+      ["update", "td-1", "--title", "Updated title", "--status", "in_progress", "-l", "fast"],
+      expect.objectContaining({ cwd: "/tmp/td-adapter-unit" })
+    );
   });
 
-  describe("log()", () => {
-    it("should log progress messages", () => {
-      // td requires minimum 15 char titles
-      const task = adapter.create("Log test task for progress tracking here");
-      expect(task).not.toBeNull();
+  it("runs workflow commands with the expected arguments", () => {
+    spawnSyncMock.mockReturnValue(tdResult(""));
 
-      adapter.start(task!.id);
-      const success = adapter.log("Made some progress");
-      expect(success).toBe(true);
+    expect(adapter.start("td-1")).toBe(true);
+    expect(adapter.stop("td-1")).toBe(true);
+    expect(adapter.log("Progress update")).toBe(true);
+    expect(adapter.log("Architecture choice", "decision")).toBe(true);
+    expect(adapter.log("Blocked on API", "blocker")).toBe(true);
+    expect(adapter.submitReview("td-1")).toBe(true);
+    expect(adapter.approve("td-1")).toBe(true);
+    expect(adapter.reject("td-1", "Missing tests")).toBe(true);
+    expect(adapter.close("td-1")).toBe(true);
+    expect(adapter.reopen("td-1")).toBe(true);
 
-      const updated = adapter.get(task!.id);
-      expect(updated!.logs).toContainEqual(
-        expect.objectContaining({
-          message: "Made some progress",
-          type: "progress",
-        })
-      );
-    });
-
-    it("should log decisions", () => {
-      const task = adapter.create("Decision test task", "Description");
-      expect(task).not.toBeNull();
-
-      adapter.start(task!.id);
-      adapter.log("Using JWT tokens for auth", "decision");
-
-      const updated = adapter.get(task!.id);
-      expect(updated!.logs).toContainEqual(
-        expect.objectContaining({
-          message: "Using JWT tokens for auth",
-          type: "decision",
-        })
-      );
-    });
-
-    it("should log blockers", () => {
-      const task = adapter.create("Blocker test task", "Description");
-      expect(task).not.toBeNull();
-
-      adapter.start(task!.id);
-      adapter.log("Waiting on API spec", "blocker");
-
-      const updated = adapter.get(task!.id);
-      expect(updated!.logs).toContainEqual(
-        expect.objectContaining({
-          message: "Waiting on API spec",
-          type: "blocker",
-        })
-      );
-    });
+    expect(spawnSyncMock.mock.calls.map(call => call[1])).toEqual([
+      ["start", "td-1"],
+      ["unstart", "td-1"],
+      ["log", "Progress update"],
+      ["log", "Architecture choice", "--decision"],
+      ["log", "Blocked on API", "--blocker"],
+      ["review", "td-1"],
+      ["approve", "td-1"],
+      ["reject", "td-1", "--reason", "Missing tests"],
+      ["close", "td-1"],
+      ["reopen", "td-1"],
+    ]);
   });
 
-  describe("handoff()", () => {
-    it("should record structured handoffs", () => {
-      // td requires minimum 15 char titles
-      const task = adapter.create("Handoff test task for agent coordination");
-      expect(task).not.toBeNull();
+  it("records handoff via td handoff stdin and falls back to a decision log", () => {
+    spawnSyncMock.mockReturnValueOnce(tdResult("", 0));
 
-      adapter.start(task!.id);
-      const success = adapter.handoff({
-        done: "OAuth flow implemented",
-        remaining: "Token refresh logic and error handling",
-        decision: "Using JWT for stateless auth",
-        uncertain: "Should tokens expire on password change?",
-      });
+    expect(
+      adapter.handoff({
+        done: "Built login flow",
+        remaining: "Add refresh tokens",
+        decision: "Use JWT",
+        uncertain: "Rotation policy",
+      })
+    ).toBe(true);
 
-      // handoff should succeed (either via td handoff or fallback)
-      expect(success).toBe(true);
+    expect(spawnSyncMock).toHaveBeenNthCalledWith(
+      1,
+      "td",
+      ["handoff"],
+      expect.objectContaining({
+        cwd: "/tmp/td-adapter-unit",
+        input: expect.stringContaining("done:\n  - Built login flow"),
+      })
+    );
 
-      // Handoff content should be recorded somewhere (log or comment)
-      const updated = adapter.get(task!.id);
-      // Either logs contain handoff or handoff was successful
-      const hasHandoffContent = updated!.logs.some(l => 
-        l.message.includes("HANDOFF") || 
-        l.message.includes("OAuth") ||
-        l.message.includes("Token")
-      );
-      // Test passes if handoff was recorded (either way)
-    });
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce(tdResult("", 1, "handoff failed"))
+      .mockReturnValueOnce(tdResult("", 0));
+
+    expect(
+      adapter.handoff({
+        done: "Built login flow",
+        remaining: "Add refresh tokens",
+        decision: "Use JWT",
+        uncertain: "",
+      })
+    ).toBe(true);
+
+    expect(spawnSyncMock.mock.calls.map(call => call[1])).toEqual([
+      ["handoff"],
+      ["log", "HANDOFF: done=[Built login flow] remaining=[Add refresh tokens] decision=[Use JWT]", "--decision"],
+    ]);
   });
 
-  describe("review workflow", () => {
-    it("should submit for review", () => {
-      // td requires minimum 15 char titles
-      const task = adapter.create("Review test task for approval workflow");
-      expect(task).not.toBeNull();
+  it("parses next, current, dependencies, usage, search, and query responses", () => {
+    spawnSyncMock
+      .mockReturnValueOnce(tdResult('{"id":"td-next","title":"Next task"}'))
+      .mockReturnValueOnce(tdResult('{"id":"td-current","title":"Current task"}'))
+      .mockReturnValueOnce(tdResult("td-a depends on something\ntd-b blocked by something\n"))
+      .mockReturnValueOnce(tdResult("usage summary"))
+      .mockReturnValueOnce(tdResult("td-s [P1] Search result\n"))
+      .mockReturnValueOnce(tdResult(taskJson("td-s")))
+      .mockReturnValueOnce(tdResult("td-q\n"))
+      .mockReturnValueOnce(tdResult(taskJson("td-q", { priority: "P0" })));
 
-      adapter.start(task!.id);
-      let success = adapter.submitReview(task!.id);
-      expect(success).toBe(true);
-
-      const updated = adapter.get(task!.id);
-      expect(updated!.status).toBe("in_review");
+    expect(adapter.next()?.id).toBe("td-next");
+    expect(adapter.current()?.id).toBe("td-current");
+    expect(adapter.getDependencies("td-deps")).toEqual({
+      dependsOn: ["td-a"],
+      blockedBy: ["td-b"],
     });
-
-    it("should approve and move to review state", () => {
-      // td requires minimum 15 char titles
-      const task = adapter.create("Approve test task for status check");
-      expect(task).not.toBeNull();
-
-      adapter.start(task!.id);
-      adapter.submitReview(task!.id);
-
-      const success = adapter.approve(task!.id);
-      expect(success).toBe(true);
-
-      // Note: In td, approve may move to different states depending on config
-      const updated = adapter.get(task!.id);
-      // Either closed or still in_review depending on td version/config
-      expect(["closed", "in_review", "open"]).toContain(updated!.status);
-    });
-
-    it("should reject with reason", () => {
-      // td requires minimum 15 char titles
-      const task = adapter.create("Reject test task with proper title length");
-      expect(task).not.toBeNull();
-
-      adapter.start(task!.id);
-      adapter.submitReview(task!.id);
-
-      const success = adapter.reject(task!.id, "Missing error handling");
-      expect(success).toBe(true);
-
-      const updated = adapter.get(task!.id);
-      expect(updated!.status).toBe("open");
-    });
+    expect(adapter.usage()).toBe("usage summary");
+    expect(adapter.search("auth").map(task => task.id)).toEqual(["td-s"]);
+    expect(adapter.query("priority <= P1").map(task => task.id)).toEqual(["td-q"]);
   });
 
-  describe("delete()", () => {
-    it("should soft delete a task", () => {
-      const task = adapter.create("Delete test task", "Description");
-      expect(task).not.toBeNull();
+  it("creates epics and extracts session ids", () => {
+    spawnSyncMock
+      .mockReturnValueOnce(tdResult("CREATED td-epic1\n"))
+      .mockReturnValueOnce(tdResult(taskJson("td-epic1", { type: "epic" })))
+      .mockReturnValueOnce(tdResult("Session: ses_abc123\n"));
 
-      const success = adapter.delete(task!.id);
-      expect(success).toBe(true);
-
-      // Task should no longer appear in list
-      const tasks = adapter.list();
-      expect(tasks.some(t => t.id === task!.id)).toBe(false);
-    });
-  });
-
-  describe("dependencies", () => {
-    it("should add and remove dependencies", () => {
-      // td requires minimum 15 char titles
-      const task1 = adapter.create("Task 1 for dependency testing here");
-      const task2 = adapter.create("Task 2 for dependency testing here");
-      expect(task1).not.toBeNull();
-      expect(task2).not.toBeNull();
-
-      // Task2 depends on Task1
-      let success = adapter.addDependency(task2!.id, task1!.id);
-      expect(success).toBe(true);
-
-      let deps = adapter.getDependencies(task2!.id);
-      // Either the dependency was added or it's tracked differently
-      expect(deps).toBeDefined();
-      
-      // Remove dependency (may not be supported in all td versions)
-      const removeSuccess = adapter.removeDependency(task2!.id, task1!.id);
-      // Don't fail the test if remove isn't supported
-    });
-  });
-
-  describe("epics", () => {
-    it("should create epics", () => {
-      // td requires minimum 15 char titles
-      const epic = adapter.createEpic("Big Feature Epic for all the things", {
-        priority: "P0",
-        description: "All related features under one epic",
-      });
-
-      expect(epic).not.toBeNull();
-      expect(epic!.type).toBe("epic");
+    const epic = adapter.createEpic("Epic title long enough", {
+      priority: "P0",
+      description: "Epic description",
     });
 
-    it("should list epics", () => {
-      // td requires minimum 15 char titles
-      adapter.createEpic("Epic 1 for grouping features", { priority: "P1" });
-      adapter.createEpic("Epic 2 for another set of features", { priority: "P2" });
-
-      const epics = adapter.listEpics();
-      // All returned should be epics
-      if (epics.length > 0) {
-        expect(epics.every(e => e.type === "epic")).toBe(true);
-      }
-    });
-  });
-
-  describe("search()", () => {
-    it("should search by text", () => {
-      adapter.create("Searchable task about authentication", "Contains auth keyword");
-      adapter.create("Other task", "No match here");
-
-      const results = adapter.search("authentication");
-      expect(results.some(t => t.title.includes("authentication"))).toBe(true);
-    });
-  });
-
-  describe("query()", () => {
-    it("should query with TDQ", () => {
-      adapter.create("P0 critical task", "Desc", { priority: "P0", type: "bug" });
-      adapter.create("P3 low task", "Desc", { priority: "P3", type: "task" });
-
-      const critical = adapter.query("priority <= P1 AND type = bug");
-      expect(critical.every(t => t.priority === "P0" || t.priority === "P1")).toBe(true);
-    });
-  });
-
-  describe("next()", () => {
-    it("should return highest priority open task", () => {
-      // td requires minimum 15 char titles
-      adapter.create("Low priority task with sufficient length", "Desc", { priority: "P3" });
-      adapter.create("High priority task with sufficient length", "Desc", { priority: "P0" });
-      adapter.create("Medium priority task with sufficient length", "Desc", { priority: "P2" });
-
-      const next = adapter.next();
-      // May be null if no open tasks or td behavior differs
-      if (next) {
-        expect(next.priority).toBe("P0");
-      }
-    });
-  });
-
-  describe("session management", () => {
-    it("should get session ID or fallback", () => {
-      const sessionId = adapter.getSessionId();
-      // Session ID should be a string (may be "unknown" if not available)
-      expect(typeof sessionId).toBe("string");
-    });
-
-    it("should get usage summary", () => {
-      // td requires minimum 15 char titles
-      const task = adapter.create("Usage test task with enough title chars");
-      if (task) {
-        adapter.start(task.id);
-        const usage = adapter.usage();
-        expect(typeof usage).toBe("string");
-      }
-    });
+    expect(epic?.type).toBe("epic");
+    expect(adapter.getSessionId()).toBe("ses_abc123");
   });
 });

@@ -13,8 +13,6 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { execSync } from "node:child_process";
-import * as path from "node:path";
 
 export interface TdTask {
   id: string;
@@ -364,7 +362,6 @@ remaining:
   - ${handoff.remaining}
 ${handoff.decision ? `decisions:\n  - ${handoff.decision}\n` : ""}${handoff.uncertain ? `uncertain:\n  - ${handoff.uncertain}\n` : ""}`;
 
-    const { spawnSync } = require("node:child_process");
     const result = spawnSync("td", ["handoff"], {
       cwd: this.cwd,
       input: yamlContent,
