@@ -39,9 +39,12 @@ export class CmuxAdapter implements TerminalAdapter {
     // First spawn splits right to create a new column, subsequent spawns
     // split down within that column so agents stack vertically.
     const splitArgs = ["new-split"];
-    if (this._columnAnchor) {
+    if (this._columnAnchor && this.isAlive(this._columnAnchor)) {
+      // Use existing column anchor if it's still alive
       splitArgs.push("down", "--surface", this._columnAnchor);
     } else {
+      // Column anchor is dead (e.g., after team_shutdown) - start fresh
+      this._columnAnchor = null;
       splitArgs.push("right");
     }
 
