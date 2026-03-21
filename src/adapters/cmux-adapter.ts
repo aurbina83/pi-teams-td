@@ -9,8 +9,21 @@ import { TerminalAdapter, SpawnOptions, execCommand } from "../utils/terminal-ad
 export class CmuxAdapter implements TerminalAdapter {
   readonly name = "cmux";
 
-  // Track the first spawned surface so subsequent spawns stack vertically on it
+  // Track the most recently spawned surface so subsequent spawns continue
+  // extending the teammate column from the latest pane.
   private _columnAnchor: string | null = null;
+  private _trackedSurfaces: string[] = [];
+
+  private pruneTrackedSurfaces(): void {
+    this._trackedSurfaces = this._trackedSurfaces.filter(surfaceId => this.isAlive(surfaceId));
+  }
+
+  private refreshAnchor(): void {
+    this.pruneTrackedSurfaces();
+    this._columnAnchor = this._trackedSurfaces.length > 0
+      ? this._trackedSurfaces[this._trackedSurfaces.length - 1]
+      : null;
+  }
 
   detect(): boolean {
     // Defensive: Don't detect cmux if we're inside tmux or Zellij
@@ -40,6 +53,8 @@ export class CmuxAdapter implements TerminalAdapter {
     // split down within that column so agents stack vertically.
     let splitResult;
     
+    this.refreshAnchor();
+
     if (this._columnAnchor) {
       // Try splitting down on existing anchor first
       splitResult = execCommand("cmux", ["new-split", "down", "--surface", this._columnAnchor]);
@@ -65,10 +80,10 @@ export class CmuxAdapter implements TerminalAdapter {
       // Send the command to the new surface (append newline to execute it)
       execCommand("cmux", ["send", "--surface", surfaceId, fullCommand + "\n"]);
 
-      // The first surface becomes the column anchor for subsequent vertical splits
-      if (!this._columnAnchor) {
-        this._columnAnchor = surfaceId;
-      }
+      // The newest surface becomes the anchor for the next vertical split.
+      this._trackedSurfaces = this._trackedSurfaces.filter(id => id !== surfaceId);
+      this._trackedSurfaces.push(surfaceId);
+      this._columnAnchor = surfaceId;
       return surfaceId;
     }
 
@@ -81,6 +96,10 @@ export class CmuxAdapter implements TerminalAdapter {
     try {
       // CMUX calls them surfaces
       execCommand("cmux", ["close-surface", "--surface", paneId]);
+      this._trackedSurfaces = this._trackedSurfaces.filter(id => id !== paneId);
+      if (this._columnAnchor === paneId) {
+        this.refreshAnchor();
+      }
     } catch {
       // Ignore errors during kill
     }

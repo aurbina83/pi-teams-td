@@ -153,7 +153,7 @@ describe("CmuxAdapter", () => {
       expect(result).toBe("surface:8");
     });
 
-    it("should split right for the first spawn, then down on the anchor for subsequent spawns", () => {
+    it("should split right for the first spawn, then keep moving the anchor to the newest pane", () => {
       // First spawn: splits right (anchor is null)
       mockExecCommand
         .mockReturnValueOnce({ stdout: "OK surface:1 workspace:1", stderr: "", status: 0 })  // new-split right
@@ -177,6 +177,7 @@ describe("CmuxAdapter", () => {
 
       // Second spawn: splits down, targeting the first surface
       mockExecCommand
+        .mockReturnValueOnce({ stdout: "surface:1\nsurface:2", stderr: "", status: 0 })      // list-pane-surfaces
         .mockReturnValueOnce({ stdout: "OK surface:2 workspace:1", stderr: "", status: 0 })  // new-split down
         .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });                           // send
 
@@ -196,8 +197,10 @@ describe("CmuxAdapter", () => {
         ["send", "--surface", "surface:2", "cd '/project' && pi --agent a2\n"]
       );
 
-      // Third spawn: also splits down on the anchor
+      // Third spawn: splits down on the newest pane, not the original anchor
       mockExecCommand
+        .mockReturnValueOnce({ stdout: "surface:1\nsurface:2\nsurface:3", stderr: "", status: 0 }) // list-pane-surfaces for surface:1
+        .mockReturnValueOnce({ stdout: "surface:1\nsurface:2\nsurface:3", stderr: "", status: 0 }) // list-pane-surfaces for surface:2
         .mockReturnValueOnce({ stdout: "OK surface:3 workspace:1", stderr: "", status: 0 })  // new-split down
         .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });                           // send
 
@@ -210,7 +213,7 @@ describe("CmuxAdapter", () => {
 
       expect(mockExecCommand).toHaveBeenCalledWith(
         "cmux",
-        ["new-split", "down", "--surface", "surface:1"]
+        ["new-split", "down", "--surface", "surface:2"]
       );
       expect(mockExecCommand).toHaveBeenCalledWith(
         "cmux",
@@ -231,11 +234,11 @@ describe("CmuxAdapter", () => {
         env: {},
       });
 
-      // Second spawn: anchor is dead, so down split fails then right split succeeds
+      // Second spawn: anchor is dead, so adapter resets it before attempting a split
       mockExecCommand
-        .mockReturnValueOnce({ stdout: "", stderr: "Surface not found", status: 1 })  // new-split down (fails)
+        .mockReturnValueOnce({ stdout: "surface:2", stderr: "", status: 0 }) // list-pane-surfaces from isAlive()
         .mockReturnValueOnce({ stdout: "OK surface:2 workspace:1", stderr: "", status: 0 })  // new-split right
-        .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });                           // send
+        .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });                          // send
 
       adapter.spawn({
         name: "agent-2",
@@ -244,10 +247,6 @@ describe("CmuxAdapter", () => {
         env: {},
       });
 
-      expect(mockExecCommand).toHaveBeenCalledWith(
-        "cmux",
-        ["new-split", "down", "--surface", "surface:1"]
-      );
       expect(mockExecCommand).toHaveBeenCalledWith(
         "cmux",
         ["new-split", "right"]
@@ -265,6 +264,80 @@ describe("CmuxAdapter", () => {
         "cmux",
         ["close-surface", "--surface", "surface-42"]
       );
+    });
+
+    it("should reanchor to another tracked pane when killing the anchor pane", () => {
+      mockExecCommand
+        .mockReturnValueOnce({ stdout: "OK surface:1 workspace:1", stderr: "", status: 0 })
+        .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 })
+        .mockReturnValueOnce({ stdout: "surface:1\nsurface:2", stderr: "", status: 0 })
+        .mockReturnValueOnce({ stdout: "OK surface:2 workspace:1", stderr: "", status: 0 })
+        .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });
+
+      adapter.spawn({
+        name: "agent-1",
+        cwd: "/project",
+        command: "pi --agent a1",
+        env: {},
+      });
+
+      adapter.spawn({
+        name: "agent-2",
+        cwd: "/project",
+        command: "pi --agent a2",
+        env: {},
+      });
+
+      mockExecCommand.mockClear();
+      mockExecCommand
+        .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 })
+        .mockReturnValueOnce({ stdout: "surface:1", stderr: "", status: 0 })
+        .mockReturnValueOnce({ stdout: "surface:1", stderr: "", status: 0 })
+        .mockReturnValueOnce({ stdout: "OK surface:3 workspace:1", stderr: "", status: 0 })
+        .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });
+
+      adapter.kill("surface:2");
+      adapter.spawn({
+        name: "agent-3",
+        cwd: "/project",
+        command: "pi --agent a3",
+        env: {},
+      });
+
+      expect(mockExecCommand).toHaveBeenCalledWith(
+        "cmux",
+        ["new-split", "down", "--surface", "surface:1"]
+      );
+      expect(mockExecCommand).not.toHaveBeenCalledWith("cmux", ["new-split", "right"]);
+    });
+
+    it("should clear the anchor when the killed anchor was the last tracked pane", () => {
+      mockExecCommand
+        .mockReturnValueOnce({ stdout: "OK surface:1 workspace:1", stderr: "", status: 0 })
+        .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });
+
+      adapter.spawn({
+        name: "agent-1",
+        cwd: "/project",
+        command: "pi --agent a1",
+        env: {},
+      });
+
+      mockExecCommand.mockClear();
+      mockExecCommand
+        .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 })
+        .mockReturnValueOnce({ stdout: "OK surface:2 workspace:1", stderr: "", status: 0 })
+        .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });
+
+      adapter.kill("surface:1");
+      adapter.spawn({
+        name: "agent-2",
+        cwd: "/project",
+        command: "pi --agent a2",
+        env: {},
+      });
+
+      expect(mockExecCommand).toHaveBeenCalledWith("cmux", ["new-split", "right"]);
     });
 
     it("should be idempotent - no error on empty pane ID", () => {
