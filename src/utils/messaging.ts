@@ -54,6 +54,17 @@ export async function readInbox(
   });
 }
 
+export async function clearInbox(teamName: string, agentName: string): Promise<void> {
+  const p = inboxPath(teamName, agentName);
+  if (!fs.existsSync(p)) return;
+
+  await withLock(p, async () => {
+    if (fs.existsSync(p)) {
+      fs.unlinkSync(p);
+    }
+  });
+}
+
 export async function sendPlainMessage(
   teamName: string,
   fromName: string,

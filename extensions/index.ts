@@ -601,6 +601,7 @@ export default function (pi: ExtensionAPI) {
       };
 
       await teams.addMember(safeTeamName, member);
+      await messaging.clearInbox(safeTeamName, safeName);
       await messaging.sendPlainMessage(safeTeamName, "team-lead", safeName, params.prompt, "Initial prompt");
 
       const piBinary = getPiLaunchCommand();
@@ -1160,6 +1161,7 @@ export default function (pi: ExtensionAPI) {
           };
 
           await teams.addMember(safeTeamName, member);
+          await messaging.clearInbox(safeTeamName, safeName);
           await messaging.sendPlainMessage(safeTeamName, "team-lead", safeName, agentDef.prompt, "Initial prompt from predefined team");
 
           const piBinary = getPiLaunchCommand();
