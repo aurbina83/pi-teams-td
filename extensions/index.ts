@@ -336,18 +336,31 @@ export default function (pi: ExtensionAPI) {
   const envTeamName = process.env.PI_TEAM_NAME;
 
   // For leads without PI_TEAM_NAME, check if we're registered as lead for a team
-  const detectedTeamName = envTeamName || findLeadTeamForSession();
-  const teamName = detectedTeamName;
+  let currentTeamName = envTeamName || findLeadTeamForSession();
+
+  function getActiveTeamName(): string | null {
+    if (isTeammate) {
+      return currentTeamName;
+    }
+
+    if (currentTeamName) {
+      return currentTeamName;
+    }
+
+    currentTeamName = findLeadTeamForSession();
+    return currentTeamName;
+  }
 
   const terminal = getTerminalAdapter();
 
   pi.on("session_start", async (_event, ctx) => {
     paths.ensureDirs();
+    const activeTeamName = getActiveTeamName();
     if (isTeammate) {
-      if (teamName) {
-        const pidFile = path.join(paths.teamDir(teamName), `${agentName}.pid`);
+      if (activeTeamName) {
+        const pidFile = path.join(paths.teamDir(activeTeamName), `${agentName}.pid`);
         fs.writeFileSync(pidFile, process.pid.toString());
-        await runtime.writeRuntimeStatus(teamName, agentName, {
+        await runtime.writeRuntimeStatus(activeTeamName, agentName, {
           pid: process.pid,
           startedAt: Date.now(),
           lastHeartbeatAt: Date.now(),
@@ -355,11 +368,11 @@ export default function (pi: ExtensionAPI) {
           lastError: undefined,
         });
       }
-      ctx.ui.notify(`Teammate: ${agentName} (Team: ${teamName})`, "info");
+      ctx.ui.notify(`Teammate: ${agentName} (Team: ${activeTeamName})`, "info");
       ctx.ui.setStatus("00-pi-teams", `[${agentName.toUpperCase()}]`);
 
       if (terminal) {
-        const fullTitle = teamName ? `${teamName}: ${agentName}` : agentName;
+        const fullTitle = activeTeamName ? `${activeTeamName}: ${agentName}` : agentName;
         const setIt = () => {
           if ((ctx.ui as any).setTitle) (ctx.ui as any).setTitle(fullTitle);
           terminal.setTitle(fullTitle);
@@ -371,22 +384,26 @@ export default function (pi: ExtensionAPI) {
       }
 
       setTimeout(() => {
-        pi.sendUserMessage(`I am starting my work as '${agentName}' on team '${teamName}'. Checking my inbox for instructions...`);
+        pi.sendUserMessage(`I am starting my work as '${agentName}' on team '${activeTeamName}'. Checking my inbox for instructions...`);
       }, 1000);
-    } else if (teamName) {
-      ctx.ui.setStatus("pi-teams", `Lead @ ${teamName}`);
+    } else if (activeTeamName) {
+      ctx.ui.setStatus("pi-teams", `Lead @ ${activeTeamName}`);
     }
 
-    // Inbox polling for BOTH teammates AND team-leads (anyone with teamName)
-    if (teamName) {
+    // Inbox polling for teammates and leads. Leads may create a team after
+    // session start, so they need a poller even before a team is bound.
+    if (!isTeammate || activeTeamName) {
       setInterval(async () => {
-        // Leads always poll so they get notified even when busy with the user.
-        // Teammates only poll when idle to avoid interrupting their work.
-        if (!isTeammate || ctx.isIdle()) {
+        const pollTeamName = getActiveTeamName();
+        if (!pollTeamName) {
+          return;
+        }
+
+        if (ctx.isIdle()) {
           try {
-            const unread = await messaging.readInbox(teamName, agentName, true, false);
+            const unread = await messaging.readInbox(pollTeamName, agentName, true, false);
             if (isTeammate) {
-              await runtime.writeRuntimeStatus(teamName, agentName, {
+              await runtime.writeRuntimeStatus(pollTeamName, agentName, {
                 lastHeartbeatAt: Date.now(),
               });
             }
@@ -395,7 +412,7 @@ export default function (pi: ExtensionAPI) {
             }
           } catch (e) {
             if (isTeammate) {
-              await runtime.writeRuntimeStatus(teamName, agentName, {
+              await runtime.writeRuntimeStatus(pollTeamName, agentName, {
                 lastHeartbeatAt: Date.now(),
                 lastError: runtime.createRuntimeError(e),
               });
@@ -408,11 +425,12 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("turn_start", async (_event, ctx) => {
     if (isTeammate) {
-      const fullTitle = teamName ? `${teamName}: ${agentName}` : agentName;
+      const activeTeamName = getActiveTeamName();
+      const fullTitle = activeTeamName ? `${activeTeamName}: ${agentName}` : agentName;
       if ((ctx.ui as any).setTitle) (ctx.ui as any).setTitle(fullTitle);
       if (terminal) terminal.setTitle(fullTitle);
-      if (teamName) {
-        await runtime.writeRuntimeStatus(teamName, agentName, {
+      if (activeTeamName) {
+        await runtime.writeRuntimeStatus(activeTeamName, agentName, {
           lastHeartbeatAt: Date.now(),
         });
       }
@@ -423,17 +441,18 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     if (isTeammate && firstTurn) {
       firstTurn = false;
+      const activeTeamName = getActiveTeamName();
 
-      if (teamName) {
-        await runtime.writeRuntimeStatus(teamName, agentName, {
+      if (activeTeamName) {
+        await runtime.writeRuntimeStatus(activeTeamName, agentName, {
           lastHeartbeatAt: Date.now(),
         });
       }
 
       let modelInfo = "";
-      if (teamName) {
+      if (activeTeamName) {
         try {
-          const teamConfig = await teams.readConfig(teamName);
+          const teamConfig = await teams.readConfig(activeTeamName);
           const member = teamConfig.members.find(m => m.name === agentName);
           if (member && member.model) {
             modelInfo = `\nYou are currently using model: ${member.model}`;
@@ -448,7 +467,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       return {
-        systemPrompt: event.systemPrompt + `\n\nYou are teammate '${agentName}' on team '${teamName}'.\nYour lead is 'team-lead'.${modelInfo}\nStart by calling read_inbox(team_name="${teamName}") to get your initial instructions.`,
+        systemPrompt: event.systemPrompt + `\n\nYou are teammate '${agentName}' on team '${activeTeamName}'.\nYour lead is 'team-lead'.${modelInfo}\nStart by calling read_inbox(team_name="${activeTeamName}") to get your initial instructions.`,
       };
     }
   });
@@ -498,7 +517,9 @@ export default function (pi: ExtensionAPI) {
       
       const config = teams.createTeam(params.team_name, "local-session", "lead-agent", params.description, params.default_model, params.separate_windows);
       // Register this session as the lead so it can receive inbox messages
+      currentTeamName = params.team_name;
       registerLeadSession(params.team_name);
+      ctx.ui.setStatus("pi-teams", `Lead @ ${params.team_name}`);
       return {
         content: [{ type: "text", text: `Team ${params.team_name} created.` }],
         details: { config },
@@ -736,8 +757,9 @@ export default function (pi: ExtensionAPI) {
       const targetAgent = params.agent_name || agentName;
       const msgs = await messaging.readInbox(params.team_name, targetAgent, params.unread_only);
 
-      if (isTeammate && teamName && params.team_name === teamName && targetAgent === agentName) {
-        await runtime.writeRuntimeStatus(teamName, agentName, {
+      const activeTeamName = getActiveTeamName();
+      if (isTeammate && activeTeamName && params.team_name === activeTeamName && targetAgent === agentName) {
+        await runtime.writeRuntimeStatus(activeTeamName, agentName, {
           lastHeartbeatAt: Date.now(),
           lastInboxReadAt: Date.now(),
           ready: true,
@@ -863,6 +885,10 @@ export default function (pi: ExtensionAPI) {
         const tasksDir = paths.taskDir(teamName);
         if (fs.existsSync(tasksDir)) fs.rmSync(tasksDir, { recursive: true });
         if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true });
+        if (!isTeammate && currentTeamName === teamName) {
+          currentTeamName = null;
+          ctx.ui.setStatus("pi-teams", "Lead");
+        }
 
         // Clean up orphaned agent session folders (older than 1 hour)
         const cleanedSessions = cleanupAgentSessionFolders(60 * 60 * 1000);
@@ -1082,7 +1108,9 @@ export default function (pi: ExtensionAPI) {
 
       // Create the team
       const config = teams.createTeam(params.team_name, "local-session", "lead-agent", `Predefined team: ${params.predefined_team}`, params.default_model, params.separate_windows);
+      currentTeamName = params.team_name;
       registerLeadSession(params.team_name);
+      ctx.ui.setStatus("pi-teams", `Lead @ ${params.team_name}`);
 
       const agentDefinitions = predefined.getAllAgentDefinitions(projectDir);
       const spawnResults: Array<{ name: string; status: string; error?: string }> = [];
