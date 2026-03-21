@@ -2,13 +2,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createTask, listTasks } from "./tasks";
+import { createTask, listTasks, clearAdapterCache, setAdapter, JsonTaskAdapter } from "./tasks";
 import * as paths from "./paths";
 
 const testDir = path.join(os.tmpdir(), "pi-tasks-race-test-" + Date.now());
 
 describe("Tasks Race Condition Bug", () => {
   beforeEach(() => {
+    // Force JSON adapter for unit tests (td has different requirements)
+    clearAdapterCache();
+    setAdapter(new JsonTaskAdapter());
+
     if (fs.existsSync(testDir)) fs.rmSync(testDir, { recursive: true });
     fs.mkdirSync(testDir, { recursive: true });
     
