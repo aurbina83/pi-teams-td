@@ -154,10 +154,9 @@ describe("CmuxAdapter", () => {
     });
 
     it("should split right for the first spawn, then down on the anchor for subsequent spawns", () => {
-      // First spawn: splits right — response includes extra metadata
-      // isAlive is called first but _columnAnchor is null, so it just splits right
+      // First spawn: splits right (anchor is null)
       mockExecCommand
-        .mockReturnValueOnce({ stdout: "OK surface:1 workspace:1", stderr: "", status: 0 })  // new-split
+        .mockReturnValueOnce({ stdout: "OK surface:1 workspace:1", stderr: "", status: 0 })  // new-split right
         .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });                           // send
 
       adapter.spawn({
@@ -177,10 +176,8 @@ describe("CmuxAdapter", () => {
       );
 
       // Second spawn: splits down, targeting the first surface
-      // isAlive check first (returns true since surface exists)
       mockExecCommand
-        .mockReturnValueOnce({ stdout: "OK surface:1 surface:2", stderr: "", status: 0 })  // isAlive list-pane-surfaces
-        .mockReturnValueOnce({ stdout: "OK surface:2 workspace:1", stderr: "", status: 0 })  // new-split
+        .mockReturnValueOnce({ stdout: "OK surface:2 workspace:1", stderr: "", status: 0 })  // new-split down
         .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });                           // send
 
       adapter.spawn({
@@ -199,10 +196,9 @@ describe("CmuxAdapter", () => {
         ["send", "--surface", "surface:2", "cd '/project' && pi --agent a2\n"]
       );
 
-      // Third spawn: also splits down on the anchor (isAlive still returns true)
+      // Third spawn: also splits down on the anchor
       mockExecCommand
-        .mockReturnValueOnce({ stdout: "OK surface:1 surface:2 surface:3", stderr: "", status: 0 })  // isAlive list-pane-surfaces
-        .mockReturnValueOnce({ stdout: "OK surface:3 workspace:1", stderr: "", status: 0 })  // new-split
+        .mockReturnValueOnce({ stdout: "OK surface:3 workspace:1", stderr: "", status: 0 })  // new-split down
         .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });                           // send
 
       adapter.spawn({
@@ -235,10 +231,10 @@ describe("CmuxAdapter", () => {
         env: {},
       });
 
-      // Second spawn: anchor is dead (isAlive returns empty/not found)
+      // Second spawn: anchor is dead, so down split fails then right split succeeds
       mockExecCommand
-        .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 })  // isAlive list-pane-surfaces (anchor not found)
-        .mockReturnValueOnce({ stdout: "OK surface:2 workspace:1", stderr: "", status: 0 })  // new-split (right, not down)
+        .mockReturnValueOnce({ stdout: "", stderr: "Surface not found", status: 1 })  // new-split down (fails)
+        .mockReturnValueOnce({ stdout: "OK surface:2 workspace:1", stderr: "", status: 0 })  // new-split right
         .mockReturnValueOnce({ stdout: "", stderr: "", status: 0 });                           // send
 
       adapter.spawn({
@@ -248,7 +244,10 @@ describe("CmuxAdapter", () => {
         env: {},
       });
 
-      // Should split right, not down, because anchor was dead
+      expect(mockExecCommand).toHaveBeenCalledWith(
+        "cmux",
+        ["new-split", "down", "--surface", "surface:1"]
+      );
       expect(mockExecCommand).toHaveBeenCalledWith(
         "cmux",
         ["new-split", "right"]

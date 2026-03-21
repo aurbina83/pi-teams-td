@@ -38,19 +38,21 @@ export class CmuxAdapter implements TerminalAdapter {
 
     // First spawn splits right to create a new column, subsequent spawns
     // split down within that column so agents stack vertically.
-    const splitArgs = ["new-split"];
-    if (this._columnAnchor && this.isAlive(this._columnAnchor)) {
-      // Use existing column anchor if it's still alive
-      splitArgs.push("down", "--surface", this._columnAnchor);
+    let splitResult;
+    
+    if (this._columnAnchor) {
+      // Try splitting down on existing anchor first
+      splitResult = execCommand("cmux", ["new-split", "down", "--surface", this._columnAnchor]);
+      
+      // If anchor is dead (surface not found), reset and split right instead
+      if (splitResult.status !== 0 && splitResult.stderr.includes("Surface not found")) {
+        this._columnAnchor = null;
+        splitResult = execCommand("cmux", ["new-split", "right"]);
+      }
     } else {
-      // Column anchor is dead (e.g., after team_shutdown) - start fresh
-      this._columnAnchor = null;
-      splitArgs.push("right");
+      // No anchor yet, split right to create first column
+      splitResult = execCommand("cmux", ["new-split", "right"]);
     }
-
-    // cmux new-split does NOT support --command, so we split first
-    // then send the command text to the new surface via `cmux send`.
-    const splitResult = execCommand("cmux", splitArgs);
 
     if (splitResult.status !== 0) {
       throw new Error(`cmux new-split failed with status ${splitResult.status}: ${splitResult.stderr}`);
