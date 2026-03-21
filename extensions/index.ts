@@ -380,7 +380,9 @@ export default function (pi: ExtensionAPI) {
     // Inbox polling for BOTH teammates AND team-leads (anyone with teamName)
     if (teamName) {
       setInterval(async () => {
-        if (ctx.isIdle()) {
+        // Leads always poll so they get notified even when busy with the user.
+        // Teammates only poll when idle to avoid interrupting their work.
+        if (!isTeammate || ctx.isIdle()) {
           try {
             const unread = await messaging.readInbox(teamName, agentName, true, false);
             if (isTeammate) {
